@@ -12,8 +12,8 @@
   <relativePath/> <!-- lookup parent from repository -->
 </parent>
 <groupId>com.google.ortools</groupId>
-<artifactId>vehicle-routing-problem</artifactId>
-<version>0.0.2</version>
+<artifactId>vehicle-allocation-plan</artifactId>
+<version>0.0.1</version>
 <packaging>jar</packaging>
 
 <name>${project.groupId}:${project.artifactId}</name>

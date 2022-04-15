@@ -1,4 +1,4 @@
-package com.tg.routing;
+package com.tg.vehicleallocation;
 
 public enum  PickupOrderStatus {
 
