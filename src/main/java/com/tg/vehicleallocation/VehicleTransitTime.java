@@ -22,6 +22,12 @@ public class VehicleTransitTime {
 	@Field("max_vehicles")
 	public int maxVehicles;
 
+	@Field("max_load")
+	public int maxLoad;
+
 	@Field("weekly_holidays")
 	public List<Integer> weeklyHolidays;
+
+	@Field("public_holidays")
+	public List<String> publicHolidays;
 }

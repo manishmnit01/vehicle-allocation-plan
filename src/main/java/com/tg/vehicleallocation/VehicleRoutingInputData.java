@@ -28,6 +28,8 @@ public class VehicleRoutingInputData {
 
   long[] vehicleCapacity;
 
+  Map<Integer, int[]> allowedVehiclesForOrder = new HashMap<>();
+
   //Map<String, Vehicle> vehiclesMap = new HashMap<>();
 
   //Set<String> allZones = new HashSet<>();

@@ -6,9 +6,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @Service
 public class VehicleRoutingSolver {
@@ -51,6 +53,9 @@ public class VehicleRoutingSolver {
 
 		LocalDate startDate = productPlan.startDate;
 		LocalDate endDate = productPlan.endDate;
+		for(ProductPlanItem productPlanItem : productPlan.productPlanItems) {
+			productPlanItem.pendingQty = productPlanItem.totalQty;
+		}
 		productPlan = productPlanRepository.insertProductPlan(productPlan);
 
 		// Set available vehicles for all days.
@@ -79,6 +84,8 @@ public class VehicleRoutingSolver {
 						.filter(vehicle -> !usedVehicles.contains(vehicle))
 						.toArray(Vehicle[]::new);
 				//data.vehicles = availableVehicleSet.toArray(new Vehicle[availableVehicleSet.size()]);
+
+
 				data.vehicleCount = data.vehicles.length;
 				if (data.vehicleCount == 0) {
 					System.out.println("0 available vehicles on date "+currentDate);
@@ -87,7 +94,7 @@ public class VehicleRoutingSolver {
 				}
 
 				System.out.println();System.out.println();
-				int minVehicleCapacity = Integer.parseInt(data.vehicles[0].capacity);
+				int minVehicleCapacity = getMinCapacity(data.vehicles);
 				int daysAvailable = (int)ChronoUnit.DAYS.between(currentDate, endDate);
 				if(daysAvailable <= 0) {
 					break;
@@ -96,7 +103,7 @@ public class VehicleRoutingSolver {
 
 				data.vehicleCapacity = new long[data.vehicleCount];
 				for (int i = 0; i < data.vehicleCount; i++) {
-					data.vehicleCapacity[i] = Integer.parseInt(vehicleList.get(i).capacity);
+					data.vehicleCapacity[i] = Integer.parseInt(data.vehicles[i].capacity);
 				}
 
 				data.demands = new long[data.timeMatrix.length];
@@ -106,6 +113,13 @@ public class VehicleRoutingSolver {
 					} else {
 						data.demands[i] = minVehicleCapacity;
 					}
+
+					String placefOrder = data.pickupOrders.get(i-1).pickupId.split("-")[0];
+					int maxLoad = placeTransitTimeMap.get(placefOrder).maxLoad;
+					int[] allowedVehiclesForOrder = IntStream.range(0, data.vehicles.length)
+							.filter(vehicleIndex -> Integer.parseInt(data.vehicles[vehicleIndex].capacity) <= maxLoad)
+							.toArray();
+					data.allowedVehiclesForOrder.put(i, allowedVehiclesForOrder);
 				}
 
 				data.orderCount = data.timeMatrix.length - 1;
@@ -142,7 +156,9 @@ public class VehicleRoutingSolver {
 					dailyPlan.qty = qtyToPick;
 					productPlanItem.pendingQty = productPlanItem.pendingQty - qtyToPick;
 					productPlanItem.liftedQty = productPlanItem.liftedQty + qtyToPick;
-					dailyVehicleAllocationPlans.add(dailyPlan);
+					if(qtyToPick > 0) {
+						dailyVehicleAllocationPlans.add(dailyPlan);
+					}
 				}
 				System.out.println("Total used vehicles on date "+currentDate+ " " + allVehiclesRoute.size());
 				System.out.println(); System.out.println();
@@ -165,6 +181,9 @@ public class VehicleRoutingSolver {
 					// Convert from routing variable Index to user NodeIndex.
 					int fromNode = manager.indexToNode(fromIndex);
 					int toNode = manager.indexToNode(toIndex);
+					if (toNode !=0 && data.allowedVehiclesForOrder.get(toNode).length == 0) {
+						return 100000;
+					}
 					return data.timeMatrix[fromNode][toNode];
 				});
 
@@ -193,10 +212,14 @@ public class VehicleRoutingSolver {
 			routing.addVariableMinimizedByFinalizer(timeDimension.cumulVar(routing.end(i)));
 		}
 
-		//Allow to drop nodes. Higher penalty on dropping the already confirmed orders.
 		long penalty = 1000;
 		for (int i = 1; i < data.timeMatrix.length; ++i) {
-			routing.addDisjunction(new long[] {manager.nodeToIndex(i)}, penalty);
+			long orderIndex = manager.nodeToIndex(i);
+			routing.addDisjunction(new long[] {orderIndex}, penalty);
+			int[] allowedVehiclesForOrder = data.allowedVehiclesForOrder.get(i);
+			if(allowedVehiclesForOrder.length > 0) {
+				routing.setAllowedVehiclesForIndex(data.allowedVehiclesForOrder.get(i), orderIndex);
+			}
 		}
 
 		RoutingSearchParameters searchParameters =
@@ -229,10 +252,6 @@ public class VehicleRoutingSolver {
 			IntVar startTimeVar = timeDimension.cumulVar(index);
 			int startPointIndex = manager.indexToNode(index);
 
-			//RouteLocation startRouteLocation = new RouteLocation(startPointIndex, data.vehicles.get(i).vehicleId);
-			//startRouteLocation.distanceFromPrevNode = -1;
-			//startRouteLocation.distanceSoFar = (int) solution.min(distanceDimension.cumulVar(index));
-			//route.add(startRouteLocation);
 			index = solution.value(routing.nextVar(index));
 			PickupOrder prevOrder = null;
 			int prevIndex = -1;
@@ -246,7 +265,8 @@ public class VehicleRoutingSolver {
 				prevOrder = currentOrder;
 				currentOrder = data.pickupOrders.get(currentIndex - 1);
 				currentOrder.status = PickupOrderStatus.CONFIRMED;
-				RouteLocation routeLocation = new RouteLocation(currentIndex, currentOrder.pickupId, currentOrder.productPlanItem, Integer.parseInt(data.vehicles[i].capacity));
+				int qtyToPick = Integer.parseInt(data.vehicles[i].capacity);
+				RouteLocation routeLocation = new RouteLocation(currentIndex, currentOrder.pickupId, currentOrder.productPlanItem, qtyToPick);
 				route.add(routeLocation);
 				index = solution.value(routing.nextVar(index));
 			}
@@ -273,6 +293,13 @@ public class VehicleRoutingSolver {
 			int dayOfWeek = data.currentDate.getDayOfWeek().getValue();
 			List<Integer> weeklyHolidays = data.placeTransitTimeMap.get(productPlanItem.place).weeklyHolidays;
 			if(weeklyHolidays != null && weeklyHolidays.contains(dayOfWeek)) {
+				totalSource = 0;
+			}
+
+			DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
+			String currentDateString = data.currentDate.format(formatter);
+			List<String> publicHolidays = data.placeTransitTimeMap.get(productPlanItem.place).publicHolidays;
+			if(publicHolidays != null && publicHolidays.contains(currentDateString)) {
 				totalSource = 0;
 			}
 
@@ -306,5 +333,13 @@ public class VehicleRoutingSolver {
 		}
 
 		return timeMatrix;
+	}
+
+	public static int getMinCapacity(Vehicle[] vehicles){
+		int minCapacity = Integer.parseInt(vehicles[0].capacity);
+		for(int i=1; i<vehicles.length; i++) {
+			minCapacity = Math.min(minCapacity, Integer.parseInt(vehicles[i].capacity));
+		}
+		return minCapacity;
 	}
 }
