@@ -12,9 +12,6 @@ public class VehicleAllocationController {
 	private VehicleRoutingSolver vehicleRoutingSolver;
 
 	@Autowired
-	private OrderAssignmentService orderAssignmentService;
-
-	@Autowired
 	private ProductPlanRepository productPlanRepository;
 
 	@RequestMapping(value = "/plan", method = RequestMethod.POST)

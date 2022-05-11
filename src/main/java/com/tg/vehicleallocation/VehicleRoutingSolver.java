@@ -43,13 +43,19 @@ public class VehicleRoutingSolver {
 	private VehicleTransitTimeRepository vehicleTransitTimeRepository;
 
 	@Autowired
+	private TransporterContractRepository transporterContractRepository;
+
+	@Autowired
 	private DailyVehicleAllocationPlanRepository dailyVehicleAllocationPlanRepository;
 
 	public ProductPlan createVehicleAllocationPlan(ProductPlan productPlan) {
-		//List<ProductPlan> allPendingPlans = productPlanRepository.getPlansByCompanyIdAndStatus("testcompany","CREATED");
 		List<Vehicle> vehicleList = vehicleRepository.getActiveVehicles();
 		List<VehicleTransitTime> vehicleTransitTimes = vehicleTransitTimeRepository.getVehicleTransitTimeForAllPlaces();
-		Map<String,VehicleTransitTime> placeTransitTimeMap = vehicleTransitTimes.stream().collect(Collectors.toMap(tt -> tt.place, tt -> tt));
+		Map<String,VehicleTransitTime> placeTransitTimeMap = vehicleTransitTimes.stream().collect(Collectors.toMap(vtt -> vtt.place, vtt -> vtt));
+
+		List<TransporterContract> transporterContracts = transporterContractRepository.getAllTransportContracts();
+		Map<String, Integer> transporterContractMap = transporterContracts.stream().collect(Collectors.toMap(tc -> tc.name, tc -> tc.monthlyAllowedDistance));
+		Map<String, Integer> transporterDistanceMap = dailyVehicleAllocationPlanRepository.getTransporterWiseCompletedDistanceInMonth(productPlan.startDate);
 
 		LocalDate startDate = productPlan.startDate;
 		LocalDate endDate = productPlan.endDate;
@@ -58,119 +64,112 @@ public class VehicleRoutingSolver {
 		}
 		productPlan = productPlanRepository.insertProductPlan(productPlan);
 
-		// Set available vehicles for all days.
-		Map<LocalDate, Set<Vehicle>> dateWiseAvailableVehicles = new HashMap<>();
-		LocalDate prevDate = startDate;
-		while (prevDate.isBefore(endDate) || prevDate.equals(endDate)) {
-			dateWiseAvailableVehicles.put(prevDate, new HashSet<>(vehicleList));
-			prevDate = prevDate.plusDays(1);
-		}
+		String product = productPlan.product;
+		List<ProductPlanItem> productPlanItems = productPlan.productPlanItems;
 
-		//for (ProductPlan productPlan : allPendingPlans) {
-			String product = productPlan.product;
-			List<ProductPlanItem> productPlanItems = productPlan.productPlanItems;
+		// Create plan for each date.
+		LocalDate currentDate = startDate;
+		while (currentDate.isBefore(endDate) || currentDate.equals(endDate)) {
+			VehicleRoutingInputData data = new VehicleRoutingInputData();
+			data.productPlanItems = productPlanItems;
+			data.placeTransitTimeMap = placeTransitTimeMap;
+			data.currentDate = currentDate;
 
-			// Create plan for each date.
-			LocalDate currentDate = startDate;
-			while (currentDate.isBefore(endDate) || currentDate.equals(endDate)) {
-				VehicleRoutingInputData data = new VehicleRoutingInputData();
-				data.productPlanItems = productPlanItems;
-				data.placeTransitTimeMap = placeTransitTimeMap;
-				data.currentDate = currentDate;
-				data.product = product;
-				//Set<Vehicle> availableVehicleSet = dateWiseAvailableVehicles.get(currentDate);
-				Set<Vehicle> usedVehicles = dailyVehicleAllocationPlanRepository.getUsedVehiclesOnDay(currentDate);
-				data.vehicles = vehicleList.stream()
-						.filter(vehicle -> !usedVehicles.contains(vehicle))
-						.toArray(Vehicle[]::new);
-				//data.vehicles = availableVehicleSet.toArray(new Vehicle[availableVehicleSet.size()]);
+			Set<Vehicle> usedVehicles = dailyVehicleAllocationPlanRepository.getUsedVehiclesOnDay(currentDate);
+			Set<String> notAllowedTransporters = transporterContractMap.keySet().stream()
+					.filter(transporter -> transporterDistanceMap.getOrDefault(transporter, 0) >= transporterContractMap.get(transporter))
+					.collect(Collectors.toSet());
 
+			data.vehicles = vehicleList.stream()
+					.filter(vehicle -> !usedVehicles.contains(vehicle) && !notAllowedTransporters.contains(vehicle.transporter))
+					.toArray(Vehicle[]::new);
 
-				data.vehicleCount = data.vehicles.length;
-				if (data.vehicleCount == 0) {
-					System.out.println("0 available vehicles on date "+currentDate);
-					currentDate = currentDate.plusDays(1);
-					continue;
-				}
-
-				System.out.println();System.out.println();
-				int minVehicleCapacity = getMinCapacity(data.vehicles);
-				int daysAvailable = (int)ChronoUnit.DAYS.between(currentDate, endDate);
-				if(daysAvailable <= 0) {
-					break;
-				}
-				data.timeMatrix = computeTimeMatrix(data, minVehicleCapacity, daysAvailable);
-
-				data.vehicleCapacity = new long[data.vehicleCount];
-				for (int i = 0; i < data.vehicleCount; i++) {
-					data.vehicleCapacity[i] = Integer.parseInt(data.vehicles[i].capacity);
-				}
-
-				data.demands = new long[data.timeMatrix.length];
-				for (int i = 1; i < data.timeMatrix.length; i++) {
-					if(i < data.vehicleCount) {
-						data.demands[i] = data.vehicleCapacity[i];
-					} else {
-						data.demands[i] = minVehicleCapacity;
-					}
-
-					String placefOrder = data.pickupOrders.get(i-1).pickupId.split("-")[0];
-					int maxLoad = placeTransitTimeMap.get(placefOrder).maxLoad;
-					int[] allowedVehiclesForOrder = IntStream.range(0, data.vehicles.length)
-							.filter(vehicleIndex -> Integer.parseInt(data.vehicles[vehicleIndex].capacity) <= maxLoad)
-							.toArray();
-					data.allowedVehiclesForOrder.put(i, allowedVehiclesForOrder);
-				}
-
-				data.orderCount = data.timeMatrix.length - 1;
-				data.depot = 0;
-
-				RoutingIndexManager manager = new RoutingIndexManager(data.timeMatrix.length, data.vehicleCount, data.depot);
-				RoutingModel routing = new RoutingModel(manager);
-				Assignment solution = this.createRouteSolution(data, manager, routing);
-				Map<Vehicle, List<RouteLocation>> allVehiclesRoute = this.getVehiclesRoutes(data, routing, manager, solution);
-				//routePlanResponse.droppedOrders = data.pickupOrders.stream().filter(order -> order.status == PickupOrderStatus.PENDING).collect(Collectors.toList());
-				List<DailyVehicleAllocationPlan> dailyVehicleAllocationPlans = new ArrayList<>();
-				for (Map.Entry<Vehicle, List<RouteLocation>> entry : allVehiclesRoute.entrySet()) {
-					List<RouteLocation> routeLocationList = entry.getValue();
-					DailyVehicleAllocationPlan dailyPlan = new DailyVehicleAllocationPlan();
-					ProductPlanItem productPlanItem = routeLocationList.get(0).productPlanItem;
-					dailyPlan.place = productPlanItem.place;
-					dailyPlan.tripId = UUID.randomUUID().toString();
-					dailyPlan.product =  product;
-					dailyPlan.vehicleNumber = entry.getKey().vehicleId;
-					dailyPlan.startDate = currentDate;
-					dailyPlan.totalTransitTime = placeTransitTimeMap.get(dailyPlan.place).totalTansitDays;
-					dailyPlan.returnDate = currentDate.plusDays(dailyPlan.totalTransitTime);
-					dailyPlan.planId = productPlan.id;
-					LocalDate tempDate = currentDate;
-					/*for(int day = 1; day <= dailyPlan.totalTransitTime; day++) {
-						tempDate = tempDate.plusDays(1);
-						if(tempDate.isBefore(endDate) || tempDate.equals(endDate)) {
-							dateWiseAvailableVehicles.get(tempDate).remove(entry.getKey());
-						} else {
-							break;
-						}
-					}*/
-					int qtyToPick = Math.min(productPlanItem.pendingQty, routeLocationList.get(0).qty);
-					dailyPlan.qty = qtyToPick;
-					productPlanItem.pendingQty = productPlanItem.pendingQty - qtyToPick;
-					productPlanItem.liftedQty = productPlanItem.liftedQty + qtyToPick;
-					if(qtyToPick > 0) {
-						dailyVehicleAllocationPlans.add(dailyPlan);
-					}
-				}
-				System.out.println("Total used vehicles on date "+currentDate+ " " + allVehiclesRoute.size());
-				System.out.println(); System.out.println();
-				System.out.println("Total orders were "+ data.pickupOrders.size());
-				dailyVehicleAllocationPlanRepository.insert(dailyVehicleAllocationPlans);
+			data.vehicleCount = data.vehicles.length;
+			if (data.vehicleCount == 0) {
+				//System.out.println("0 available vehicles on date "+currentDate);
 				currentDate = currentDate.plusDays(1);
+				continue;
 			}
 
-			//productPlanRepository.insertProductPlanItems(productPlanItems);
-			productPlan.productPlanItems = productPlanItems;
-			productPlan = productPlanRepository.updateProductPlan(productPlan, ProductPlanStatus.COMPLETED, productPlanItems);
-		//}
+			int minVehicleCapacity = getMinCapacity(data.vehicles);
+			int daysAvailable = (int)ChronoUnit.DAYS.between(currentDate, endDate);
+			if(daysAvailable <= 0) {
+				break;
+			}
+			data.timeMatrix = computeTimeMatrix(data, minVehicleCapacity, daysAvailable);
+
+			data.vehicleCapacity = new long[data.vehicleCount];
+			for (int i = 0; i < data.vehicleCount; i++) {
+				data.vehicleCapacity[i] = Integer.parseInt(data.vehicles[i].capacity);
+			}
+
+			data.demands = new long[data.timeMatrix.length];
+			for (int i = 1; i < data.timeMatrix.length; i++) {
+				if(i < data.vehicleCount) {
+					data.demands[i] = data.vehicleCapacity[i];
+				} else {
+					data.demands[i] = minVehicleCapacity;
+				}
+
+				String placefOrder = data.pickupOrders.get(i-1).pickupId.split("-")[0];
+				Map<String, Integer> productMaxLoadMap = placeTransitTimeMap.get(placefOrder).maxLoad;
+				if(productMaxLoadMap != null && productMaxLoadMap.containsKey(product)) {
+					int[] allowedVehiclesForOrder = IntStream.range(0, data.vehicles.length)
+							.filter(vehicleIndex -> Integer.parseInt(data.vehicles[vehicleIndex].capacity) <= productMaxLoadMap.get(product))
+							.toArray();
+					data.allowedVehiclesForOrder.put(i, allowedVehiclesForOrder);
+				} else {
+					data.allowedVehiclesForOrder.put(i, IntStream.range(0, data.vehicles.length).toArray());
+				}
+			}
+
+			data.orderCount = data.timeMatrix.length - 1;
+			data.depot = 0;
+
+			RoutingIndexManager manager = new RoutingIndexManager(data.timeMatrix.length, data.vehicleCount, data.depot);
+			RoutingModel routing = new RoutingModel(manager);
+			Assignment solution = this.createRouteSolution(data, manager, routing);
+			Map<Vehicle, RouteLocation> allVehiclesRoute = this.getVehiclesRoutes(data, routing, manager, solution);
+			//routePlanResponse.droppedOrders = data.pickupOrders.stream().filter(order -> order.status == PickupOrderStatus.PENDING).collect(Collectors.toList());
+			List<DailyVehicleAllocationPlan> dailyVehicleAllocationPlans = new ArrayList<>();
+			for (Map.Entry<Vehicle, RouteLocation> entry : allVehiclesRoute.entrySet()) {
+				Vehicle vehicle = entry.getKey();
+				String transporter = vehicle.transporter;
+				RouteLocation routeLocation = entry.getValue();
+				DailyVehicleAllocationPlan dailyPlan = new DailyVehicleAllocationPlan();
+				ProductPlanItem productPlanItem = routeLocation.productPlanItem;
+				dailyPlan.place = productPlanItem.place;
+				dailyPlan.tripId = UUID.randomUUID().toString();
+				dailyPlan.product =  product;
+				dailyPlan.vehicleNumber = entry.getKey().vehicleId;
+				dailyPlan.transporter = transporter;
+				dailyPlan.startDate = currentDate;
+				dailyPlan.distance = placeTransitTimeMap.get(dailyPlan.place).distance;
+				dailyPlan.totalTransitTime = placeTransitTimeMap.get(dailyPlan.place).totalTansitDays;
+				dailyPlan.distance = placeTransitTimeMap.get(dailyPlan.place).distance;
+				dailyPlan.returnDate = currentDate.plusDays(dailyPlan.totalTransitTime);
+				dailyPlan.pickupDate = currentDate.plusDays(placeTransitTimeMap.get(dailyPlan.place).emptyTansitDays);
+				dailyPlan.planId = productPlan.id;
+				int qtyToPick = Math.min(productPlanItem.pendingQty, routeLocation.qty);
+				transporterDistanceMap.put(transporter, transporterDistanceMap.getOrDefault(transporter,0) + dailyPlan.distance);
+				if(transporterContractMap.containsKey(transporter) && transporterDistanceMap.get(transporter) > transporterContractMap.get(transporter)) {
+					continue;
+				}
+				dailyPlan.qty = qtyToPick;
+				productPlanItem.pendingQty = productPlanItem.pendingQty - qtyToPick;
+				productPlanItem.liftedQty = productPlanItem.liftedQty + qtyToPick;
+				if(qtyToPick > 0) {
+					dailyVehicleAllocationPlans.add(dailyPlan);
+				}
+			}
+			//System.out.println("Total used vehicles on date "+currentDate+ " " + allVehiclesRoute.size());
+			//System.out.println("Total orders were "+ data.pickupOrders.size());
+			dailyVehicleAllocationPlanRepository.insert(dailyVehicleAllocationPlans);
+			currentDate = currentDate.plusDays(1);
+		}
+
+		productPlan.productPlanItems = productPlanItems;
+		productPlan = productPlanRepository.updateProductPlan(productPlan, ProductPlanStatus.COMPLETED, productPlanItems);
 		return productPlan;
 	}
 
@@ -234,44 +233,25 @@ public class VehicleRoutingSolver {
 		return solution;
 	}
 
-	public Map<Vehicle, List<RouteLocation>> getVehiclesRoutes(
+	public Map<Vehicle, RouteLocation> getVehiclesRoutes(
 			VehicleRoutingInputData data, RoutingModel routing, RoutingIndexManager manager, Assignment solution) {
-		// Solution cost.
 		if(solution == null) {
 			throw new RuntimeException("Route is not possible within given time slots");
 		}
 
-		// Inspect solution.
-		RoutingDimension timeDimension = routing.getMutableDimension(TIME_DIMENSION);
-		RoutingDimension distanceDimension = routing.getMutableDimension(DISTANCE_DIMENSION);
-		long totalTime = 0;
-		Map<Vehicle, List<RouteLocation>> allVehiclesRoute = new HashMap<>();
+		Map<Vehicle, RouteLocation> allVehiclesRoute = new HashMap<>();
 		for (int i = 0; i < data.vehicleCount; ++i) {
 			List<RouteLocation> route = new ArrayList<>();
-			long index = routing.start(i);
-			IntVar startTimeVar = timeDimension.cumulVar(index);
-			int startPointIndex = manager.indexToNode(index);
+			long index = routing.start(i); // Depot
+			index = solution.value(routing.nextVar(index)); // Source place
 
-			index = solution.value(routing.nextVar(index));
-			PickupOrder prevOrder = null;
-			int prevIndex = -1;
-			int currentIndex = 0;
-			PickupOrder currentOrder = null;
-
-			while (!routing.isEnd(index)) {
-				IntVar timeVar = timeDimension.cumulVar(index);
-				prevIndex = currentIndex;
-				currentIndex = manager.indexToNode(index);
-				prevOrder = currentOrder;
-				currentOrder = data.pickupOrders.get(currentIndex - 1);
+			if (!routing.isEnd(index)) {
+				int currentIndex = manager.indexToNode(index);
+				PickupOrder currentOrder = data.pickupOrders.get(currentIndex - 1);
 				currentOrder.status = PickupOrderStatus.CONFIRMED;
 				int qtyToPick = Integer.parseInt(data.vehicles[i].capacity);
 				RouteLocation routeLocation = new RouteLocation(currentIndex, currentOrder.pickupId, currentOrder.productPlanItem, qtyToPick);
-				route.add(routeLocation);
-				index = solution.value(routing.nextVar(index));
-			}
-			if(!route.isEmpty()) {
-				allVehiclesRoute.put(data.vehicles[i], route);
+				allVehiclesRoute.put(data.vehicles[i], routeLocation);
 			}
 		}
 		return allVehiclesRoute;
@@ -280,7 +260,6 @@ public class VehicleRoutingSolver {
 	private static long[][] computeTimeMatrix(VehicleRoutingInputData data, int minVehicleCapacity, int daysAvailable) {
 		//int totalSize = orderSize+1;
 		int index = 1;
-		//Map<Integer, String> indexPlaceMap = new HashMap<>();
 		data.pickupOrders = new ArrayList<>();
 		for(ProductPlanItem productPlanItem : data.productPlanItems) {
 			int pendingQty = (productPlanItem.pendingQty)/daysAvailable;
@@ -290,16 +269,17 @@ public class VehicleRoutingSolver {
 			}
 
 			totalSource = Math.min(totalSource, data.placeTransitTimeMap.get(productPlanItem.place).maxVehicles);
-			int dayOfWeek = data.currentDate.getDayOfWeek().getValue();
+			int reachPlaceTransitDays = data.placeTransitTimeMap.get(productPlanItem.place).emptyTansitDays;
+			int dayOfWeekToReachPlace = data.currentDate.plusDays(reachPlaceTransitDays).getDayOfWeek().getValue();
 			List<Integer> weeklyHolidays = data.placeTransitTimeMap.get(productPlanItem.place).weeklyHolidays;
-			if(weeklyHolidays != null && weeklyHolidays.contains(dayOfWeek)) {
+			if(weeklyHolidays != null && weeklyHolidays.contains(dayOfWeekToReachPlace)) {
 				totalSource = 0;
 			}
 
 			DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
-			String currentDateString = data.currentDate.format(formatter);
+			String reachDateString = data.currentDate.plusDays(reachPlaceTransitDays).format(formatter);
 			List<String> publicHolidays = data.placeTransitTimeMap.get(productPlanItem.place).publicHolidays;
-			if(publicHolidays != null && publicHolidays.contains(currentDateString)) {
+			if(publicHolidays != null && publicHolidays.contains(reachDateString)) {
 				totalSource = 0;
 			}
 
@@ -319,6 +299,7 @@ public class VehicleRoutingSolver {
 		for (int fromNode = 0; fromNode < totalSize; ++fromNode) {
 			for (int toNode = 0; toNode < totalSize; ++toNode) {
 				if(fromNode == 0 || toNode == 0) {
+					// If source or destination is depot then set a fixed cost.
 					timeMatrix[fromNode][toNode] = 100;
 				} else {
 					String fromPlace = data.pickupOrders.get(fromNode-1).productPlanItem.place;
@@ -326,6 +307,7 @@ public class VehicleRoutingSolver {
 					if (fromPlace.equals(toPlace)) {
 						timeMatrix[fromNode][toNode] = 0;
 					} else {
+						// vehicle not allowed to visit only 1 node from depot.
 						timeMatrix[fromNode][toNode] = 100000;
 					}
 				}

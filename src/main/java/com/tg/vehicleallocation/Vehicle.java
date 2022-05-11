@@ -17,6 +17,9 @@ public class Vehicle {
 	@Field("Running status")
 	public String status;
 
+	@Field("Transporter Name")
+	public String transporter;
+
 	public Vehicle(String vehicleId) {
 		this.vehicleId = vehicleId;
 	}

@@ -4,8 +4,6 @@ public enum ProductPlanStatus {
 
 	PENDING,
 
-	PROCESSING,
-
 	COMPLETED,
 
 	FAILED

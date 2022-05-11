@@ -26,14 +26,17 @@ public class DailyVehicleAllocationPlan {
 	@Field("total_transit_time")
 	public int totalTransitTime;
 
+	@Field("distance")
+	public int distance;
+
+	@Field("pickup_date")
+	public LocalDate pickupDate;
+
 	@Field("return_date")
 	public LocalDate returnDate;
 
 	@Field("vehicle_number")
 	public String vehicleNumber;
 
-	//public String transporter;
-
-	//@Field("vehicle_capacity")
-	//public int vehicleCapacity;
+	public String transporter;
 }

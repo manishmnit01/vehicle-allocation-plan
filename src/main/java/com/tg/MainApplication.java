@@ -1,15 +1,26 @@
 package com.tg;
 
+import com.mongodb.lang.NonNull;
 import com.tg.vehicleallocation.NativeUtils;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.core.convert.converter.Converter;
 import org.springframework.context.annotation.Bean;
+import org.springframework.data.auditing.DateTimeProvider;
+import org.springframework.data.mongodb.config.EnableMongoAuditing;
+import org.springframework.data.mongodb.core.convert.MongoCustomConversions;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.TimeZone;
+
 @SpringBootApplication
-@EnableAsync
 public class MainApplication {
 
 	private static String OS = System.getProperty("os.name").toLowerCase();
@@ -39,9 +50,21 @@ public class MainApplication {
 	}
 
 	@Bean
-	public RestTemplate restTemplate(RestTemplateBuilder builder) {
-		//builder.setConnectTimeout(100000);
-		//builder.setReadTimeout(5000);
-		return builder.build();
+	public MongoCustomConversions customConversions() {
+		final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+		List<Converter<?, ?>> converterList = new ArrayList<>();
+
+		converterList.add(new Converter<LocalDate, String>() {
+			public String convert(@NonNull LocalDate source) {
+				return source.format(dateTimeFormatter);
+			}
+		});
+		converterList.add(new Converter<String, LocalDate>() {
+			public LocalDate convert(@NonNull String source) {
+				return LocalDate.parse(source, dateTimeFormatter);
+			}
+		});
+
+		return new MongoCustomConversions(converterList);
 	}
 }

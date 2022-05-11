@@ -5,15 +5,14 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Repository
-public class TransporterRepository {
+public class TransporterContractRepository {
 
 	@Autowired
 	private MongoTemplate mongoTemplate;
 
-	public List<Transporter> getVehicleTransitTimeForAllPlaces() {
-		return mongoTemplate.findAll(Transporter.class);
+	public List<TransporterContract> getAllTransportContracts() {
+		return mongoTemplate.findAll(TransporterContract.class);
 	}
 }
