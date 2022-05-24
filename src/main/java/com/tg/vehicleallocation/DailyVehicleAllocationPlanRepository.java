@@ -29,7 +29,15 @@ public class DailyVehicleAllocationPlanRepository {
 	}
 
 	public Set<Vehicle> getUsedVehiclesOnDay(LocalDate currentDate) {
-		Criteria criteria = Criteria.where("start_date").lte(currentDate).and("return_date").gte(currentDate);
+		Criteria criteria1 = Criteria.where("start_date").lte(currentDate).and("return_date").gte(currentDate);
+		Criteria criteria2 = Criteria.where("start_date").lte(currentDate.plusDays(5));
+		Query query = new Query(criteria1);
+		List<DailyVehicleAllocationPlan> usedVehicles = mongoTemplate.find(query, DailyVehicleAllocationPlan.class);
+		return usedVehicles.stream().map(dva -> new Vehicle(dva.vehicleNumber)).collect(Collectors.toSet());
+	}
+
+	public Set<Vehicle> getVehiclesNotAvailableForThePlace(LocalDate currentDate, int transitDays) {
+		Criteria criteria = Criteria.where("start_date").lte(currentDate.plusDays(transitDays)).gt(currentDate);
 		Query query = new Query(criteria);
 		List<DailyVehicleAllocationPlan> usedVehicles = mongoTemplate.find(query, DailyVehicleAllocationPlan.class);
 		return usedVehicles.stream().map(dva -> new Vehicle(dva.vehicleNumber)).collect(Collectors.toSet());

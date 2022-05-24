@@ -86,16 +86,21 @@ public class VehicleRoutingSolver {
 
 			data.vehicleCount = data.vehicles.length;
 			if (data.vehicleCount == 0) {
-				//System.out.println("0 available vehicles on date "+currentDate);
+				System.out.println("Date "+currentDate+ ", available vehicles count: 0");
 				currentDate = currentDate.plusDays(1);
 				continue;
 			}
 
 			int minVehicleCapacity = getMinCapacity(data.vehicles);
-			int daysAvailable = (int)ChronoUnit.DAYS.between(currentDate, endDate);
-			if(daysAvailable <= 0) {
-				break;
+			int daysAvailable = (int)ChronoUnit.DAYS.between(currentDate, endDate) + 1;
+
+			Map<String, Set<Vehicle>> placeToNotAvailableVehiclesMap = new HashMap<>(data.productPlanItems.size());
+			for(ProductPlanItem productPlanItem : data.productPlanItems) {
+				int transitDaysForPlace = placeTransitTimeMap.get(productPlanItem.place).totalTansitDays;
+				Set<Vehicle> notAvailableVehiclesForPlace = dailyVehicleAllocationPlanRepository.getVehiclesNotAvailableForThePlace(currentDate, transitDaysForPlace);
+				placeToNotAvailableVehiclesMap.put(productPlanItem.place, notAvailableVehiclesForPlace);
 			}
+
 			data.timeMatrix = computeTimeMatrix(data, minVehicleCapacity, daysAvailable);
 
 			data.vehicleCapacity = new long[data.vehicleCount];
@@ -111,12 +116,15 @@ public class VehicleRoutingSolver {
 					data.demands[i] = minVehicleCapacity;
 				}
 
-				String placefOrder = data.pickupOrders.get(i-1).pickupId.split("-")[0];
-				Map<String, Integer> productMaxLoadMap = placeTransitTimeMap.get(placefOrder).maxLoad;
+				String placeOfOrder = data.pickupOrders.get(i-1).pickupId.split("-")[0];
+				Map<String, Integer> productMaxLoadMap = placeTransitTimeMap.get(placeOfOrder).maxLoad;
 				if(productMaxLoadMap != null && productMaxLoadMap.containsKey(product)) {
 					int[] allowedVehiclesForOrder = IntStream.range(0, data.vehicles.length)
-							.filter(vehicleIndex -> Integer.parseInt(data.vehicles[vehicleIndex].capacity) <= productMaxLoadMap.get(product))
-							.toArray();
+							.filter(vehicleIndex -> {
+								Vehicle vehicle = data.vehicles[vehicleIndex];
+								return Integer.parseInt(vehicle.capacity) <= productMaxLoadMap.get(product)
+									&& !placeToNotAvailableVehiclesMap.get(placeOfOrder).contains(vehicle);
+							}).toArray();
 					data.allowedVehiclesForOrder.put(i, allowedVehiclesForOrder);
 				} else {
 					data.allowedVehiclesForOrder.put(i, IntStream.range(0, data.vehicles.length).toArray());
@@ -162,14 +170,14 @@ public class VehicleRoutingSolver {
 					dailyVehicleAllocationPlans.add(dailyPlan);
 				}
 			}
-			//System.out.println("Total used vehicles on date "+currentDate+ " " + allVehiclesRoute.size());
-			//System.out.println("Total orders were "+ data.pickupOrders.size());
+			System.out.println("Date "+currentDate+ ", used vehicles count: " + allVehiclesRoute.size()+", orders count: "+data.pickupOrders.size());
 			dailyVehicleAllocationPlanRepository.insert(dailyVehicleAllocationPlans);
 			currentDate = currentDate.plusDays(1);
 		}
 
 		productPlan.productPlanItems = productPlanItems;
 		productPlan = productPlanRepository.updateProductPlan(productPlan, ProductPlanStatus.COMPLETED, productPlanItems);
+		System.out.println("Vehicle assignment completed!!");
 		return productPlan;
 	}
 
@@ -262,11 +270,13 @@ public class VehicleRoutingSolver {
 		int index = 1;
 		data.pickupOrders = new ArrayList<>();
 		for(ProductPlanItem productPlanItem : data.productPlanItems) {
-			int pendingQty = (productPlanItem.pendingQty)/daysAvailable;
+			int pendingQty = productPlanItem.pendingQty;
 			int totalSource = pendingQty / minVehicleCapacity;
 			if(pendingQty % minVehicleCapacity != 0) {
 				totalSource++;
 			}
+
+			//System.out.println("Date "+data.currentDate+" original total source "+ totalSource +" place "+productPlanItem.place );
 
 			totalSource = Math.min(totalSource, data.placeTransitTimeMap.get(productPlanItem.place).maxVehicles);
 			int reachPlaceTransitDays = data.placeTransitTimeMap.get(productPlanItem.place).emptyTansitDays;
@@ -282,6 +292,8 @@ public class VehicleRoutingSolver {
 			if(publicHolidays != null && publicHolidays.contains(reachDateString)) {
 				totalSource = 0;
 			}
+
+			//System.out.println("Date "+data.currentDate+" final total source "+ totalSource +" place "+productPlanItem.place );
 
 			for(int i=1; i <= totalSource; i++) {
 				String pickupId = productPlanItem.place + "-" + i;
