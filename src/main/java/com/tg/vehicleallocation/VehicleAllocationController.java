@@ -12,12 +12,12 @@ public class VehicleAllocationController {
 	private VehicleRoutingSolver vehicleRoutingSolver;
 
 	@Autowired
-	private ProductPlanRepository productPlanRepository;
+	private SummaryVehicleAllocationPlanRepository summaryVehicleAllocationPlanRepository;
 
 	@RequestMapping(value = "/plan", method = RequestMethod.POST)
-	public ProductPlan createPlan(@RequestBody ProductPlan productPlan) throws Exception {
+	public VehicleAllocationPlan createPlan(@RequestBody VehicleAllocationPlan vehicleAllocationPlan) throws Exception {
 
-		ProductPlan updatedProductPlan = vehicleRoutingSolver.createVehicleAllocationPlan(productPlan);
-		return updatedProductPlan;
+		VehicleAllocationPlan updatedVehicleAllocationPlan = vehicleRoutingSolver.createVehicleAllocationPlan(vehicleAllocationPlan);
+		return updatedVehicleAllocationPlan;
 	}
 }

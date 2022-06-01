@@ -9,30 +9,13 @@ import java.util.Date;
 import java.util.List;
 
 //@JsonNaming(PropertyNamingStrategy.SnakeCaseStrategy.class)
-@Document(collection = "product_plans")
+//@Document(collection = "product_plans")
 public class ProductPlan {
 
-	@Id
-	public String id;
+	public String name;
 
-	@Field("company_id")
-	public String companyId;
-
-	public ProductPlanStatus status = ProductPlanStatus.PENDING;
-
-	public String product;
-
-	@Field("product_type")
-	public String productType;
-
-	@Field("start_date")
-	public LocalDate startDate;
-
-	@Field("end_date")
-	public LocalDate endDate;
+	public String type;
 
 	@Field("product_plan_items")
 	public List<ProductPlanItem> productPlanItems;
-
-	public Date created = new Date();
 }
