@@ -42,6 +42,10 @@ public class VehicleRoutingSolver {
 
 		List<TransporterContract> transporterContracts = transporterContractRepository.getAllTransportContracts();
 		Map<String, Integer> transporterContractMap = transporterContracts.stream().collect(Collectors.toMap(tc -> tc.name, tc -> tc.monthlyAllowedDistance));
+
+		Map<String, Set<String>> transporterRoutesMap = new HashMap<>();
+		transporterContracts.forEach((contract) -> transporterRoutesMap.put(contract.name, contract.routes));
+
 		Map<String, Integer> transporterDistanceMap = dailyVehicleAllocationPlanRepository.getTransporterWiseCompletedDistanceInMonth(vehicleAllocationPlan.startDate);
 
 		LocalDate startDate = vehicleAllocationPlan.startDate;
@@ -67,8 +71,9 @@ public class VehicleRoutingSolver {
 
 				Set<Vehicle> usedVehicles = dailyVehicleAllocationPlanRepository.getUsedVehiclesOnDay(currentDate);
 				Set<String> notAllowedTransporters = transporterContractMap.keySet().stream()
-						.filter(transporter -> transporterDistanceMap.getOrDefault(transporter, 0) >= transporterContractMap.get(transporter))
-						.collect(Collectors.toSet());
+						.filter(transporter -> {
+							return transporterDistanceMap.getOrDefault(transporter, 0) >= transporterContractMap.get(transporter);
+						}).collect(Collectors.toSet());
 
 				data.vehicles = vehicleList.stream()
 						.filter(vehicle -> !usedVehicles.contains(vehicle) && !notAllowedTransporters.contains(vehicle.transporter))
@@ -111,8 +116,11 @@ public class VehicleRoutingSolver {
 						int[] allowedVehiclesForOrder = IntStream.range(0, data.vehicles.length)
 								.filter(vehicleIndex -> {
 									Vehicle vehicle = data.vehicles[vehicleIndex];
+									Set<String> allowedRoutesForVehicle = transporterRoutesMap.get(vehicle.transporter);
+									String routeOfPlace = placeTransitTimeMap.get(placeOfOrder).route;
 									return Integer.parseInt(vehicle.capacity) <= productMaxLoadMap.get(productName)
-											&& !placeToNotAvailableVehiclesMap.get(placeOfOrder).contains(vehicle);
+											&& !placeToNotAvailableVehiclesMap.get(placeOfOrder).contains(vehicle)
+											&& (allowedRoutesForVehicle == null || allowedRoutesForVehicle.contains(routeOfPlace));
 								}).toArray();
 						data.allowedVehiclesForOrder.put(i, allowedVehiclesForOrder);
 					} else {

@@ -23,6 +23,9 @@ public class VehicleTransitTime {
 	@Field("distance")
 	public int distance;
 
+	@Field("route")
+	public String route;
+
 	@Field("max_vehicles")
 	public int maxVehicles;
 
