@@ -104,28 +104,22 @@ public class VehicleRoutingSolver {
 
 				data.demands = new long[data.timeMatrix.length];
 				for (int i = 1; i < data.timeMatrix.length; i++) {
-					if (i < data.vehicleCount) {
-						data.demands[i] = data.vehicleCapacity[i];
-					} else {
-						data.demands[i] = minVehicleCapacity;
-					}
+					data.demands[i] = minVehicleCapacity;
 
 					String placeOfOrder = data.pickupOrders.get(i - 1).pickupId.split("-")[0];
-					Map<String, Integer> productMaxLoadMap = placeTransitTimeMap.get(placeOfOrder).maxLoad;
-					if (productMaxLoadMap != null && productMaxLoadMap.containsKey(productName)) {
-						int[] allowedVehiclesForOrder = IntStream.range(0, data.vehicles.length)
-								.filter(vehicleIndex -> {
-									Vehicle vehicle = data.vehicles[vehicleIndex];
-									Set<String> allowedRoutesForVehicle = transporterRoutesMap.get(vehicle.transporter);
-									String routeOfPlace = placeTransitTimeMap.get(placeOfOrder).route;
-									return Integer.parseInt(vehicle.capacity) <= productMaxLoadMap.get(productName)
-											&& !placeToNotAvailableVehiclesMap.get(placeOfOrder).contains(vehicle)
-											&& (allowedRoutesForVehicle == null || allowedRoutesForVehicle.contains(routeOfPlace));
-								}).toArray();
-						data.allowedVehiclesForOrder.put(i, allowedVehiclesForOrder);
-					} else {
-						data.allowedVehiclesForOrder.put(i, IntStream.range(0, data.vehicles.length).toArray());
-					}
+					Map<String, Integer> productMaxLoadMap = placeTransitTimeMap.get(placeOfOrder).maxLoad != null ? placeTransitTimeMap.get(placeOfOrder).maxLoad : new HashMap<>(0);
+					int[] allowedVehiclesForOrder = IntStream.range(0, data.vehicles.length)
+							.filter(vehicleIndex -> {
+								Vehicle vehicle = data.vehicles[vehicleIndex];
+								Set<String> allowedRoutesForVehicle = transporterRoutesMap.get(vehicle.transporter);
+								String routeOfPlace = placeTransitTimeMap.get(placeOfOrder).route;
+								int distanceOfPlace = placeTransitTimeMap.get(placeOfOrder).distance;
+								return Integer.parseInt(vehicle.capacity) <= productMaxLoadMap.getOrDefault(productName, Integer.MAX_VALUE)
+										&& !placeToNotAvailableVehiclesMap.get(placeOfOrder).contains(vehicle)
+										&& (allowedRoutesForVehicle == null || allowedRoutesForVehicle.contains(routeOfPlace))
+										&& transporterDistanceMap.getOrDefault(vehicle.transporter, 0) + distanceOfPlace <= transporterContractMap.getOrDefault(vehicle.transporter, Integer.MAX_VALUE);
+							}).toArray();
+					data.allowedVehiclesForOrder.put(i, allowedVehiclesForOrder);
 				}
 
 				data.orderCount = data.timeMatrix.length - 1;
@@ -137,7 +131,6 @@ public class VehicleRoutingSolver {
 				Map<Vehicle, RouteLocation> allVehiclesRoute = this.getVehiclesRoutes(data, routing, manager, solution);
 				//routePlanResponse.droppedOrders = data.pickupOrders.stream().filter(order -> order.status == PickupOrderStatus.PENDING).collect(Collectors.toList());
 				List<DailyVehicleAllocationPlan> dailyVehicleAllocationPlans = new ArrayList<>();
-				List<String> list = new ArrayList<>();
 				for (Map.Entry<Vehicle, RouteLocation> entry : allVehiclesRoute.entrySet()) {
 					Vehicle vehicle = entry.getKey();
 					String transporter = vehicle.transporter;
@@ -150,13 +143,15 @@ public class VehicleRoutingSolver {
 					dailyPlan.vehicleNumber = entry.getKey().vehicleId;
 					dailyPlan.transporter = transporter;
 					dailyPlan.startDate = currentDate;
-					dailyPlan.distance = placeTransitTimeMap.get(dailyPlan.place).distance;
 					dailyPlan.totalTransitTime = placeTransitTimeMap.get(dailyPlan.place).totalTansitDays;
 					dailyPlan.distance = placeTransitTimeMap.get(dailyPlan.place).distance;
 					dailyPlan.returnDate = currentDate.plusDays(dailyPlan.totalTransitTime);
 					dailyPlan.pickupDate = currentDate.plusDays(placeTransitTimeMap.get(dailyPlan.place).emptyTansitDays);
 					dailyPlan.planId = vehicleAllocationPlan.id;
 					int qtyToPick = Math.min(productPlanItem.pendingQty, routeLocation.qty);
+					/*if (transporterContractMap.containsKey(transporter) && transporterDistanceMap.getOrDefault(transporter, 0) + dailyPlan.distance > transporterContractMap.get(transporter)) {
+						continue;
+					}*/
 					transporterDistanceMap.put(transporter, transporterDistanceMap.getOrDefault(transporter, 0) + dailyPlan.distance);
 					if (transporterContractMap.containsKey(transporter) && transporterDistanceMap.get(transporter) > transporterContractMap.get(transporter)) {
 						continue;
@@ -167,10 +162,8 @@ public class VehicleRoutingSolver {
 					if (qtyToPick > 0) {
 						dailyVehicleAllocationPlans.add(dailyPlan);
 					}
-					list.add(routeLocation.orderId);
 				}
 				System.out.println(String.format("Date: %s, Product: %s, OrderCount: %d, VehicleCount: %d", currentDate, productName, data.pickupOrders.size(), allVehiclesRoute.size()));
-				//System.out.println(Arrays.toString(list.toArray(new String[list.size()])));
 				dailyVehicleAllocationPlanRepository.insert(dailyVehicleAllocationPlans);
 			}
 			System.out.println();
